@@ -7,5 +7,5 @@ Loss - Cross entropy
 Learning rate - 0.001  
 Epochs - 50  
 #### Learning curves
-![alt text](./images/Loss.png)
-![](./images/Loss.png)  
+![](./images/Loss.png)
+![](./images/Accuracy.png)  

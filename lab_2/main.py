@@ -122,80 +122,77 @@ def _main():
 		    best_results_per_input = [utils.pick_best(results, 0.30) for results in results_per_input]
 		    results.append(best_results_per_input)
 	
+	
 	final_result = []
 	idx = 0 
 	for result in results:
-		image = paths[idx].split('/')[-1].split('.')[0]
-		idx+=1
-		if image not in meta_data_rescaled.index:
-		    print(f"Skip image - {image}")
-		    continue
-		meta_data_rescaled.loc[image]
-		result_bboxes = result[0][0] * 300
-		result_classes = result[0][1]
-		confidences = result[0][2]
-		true_boxes = meta_data_rescaled.loc[image][['bbox_left', 'bbox_top', 'bbox_width', 'bbox_height']].values
-		true_classes = meta_data_rescaled.loc[image][['object_category']].values
-		if len(true_classes) == 1:
-		    true_boxes = [true_boxes]
-		for true_idx in range(len(true_classes)):
-		    for result_idx in range(len(result_classes)):
-		        if true_classes[true_idx] == result_classes[result_idx]:
-		            IoU = iou(result_bboxes[result_idx], [true_boxes[true_idx][0],
-		                                                true_boxes[true_idx][1] ,
-		                                                true_boxes[true_idx][0] + true_boxes[true_idx][2],
-		                                                true_boxes[true_idx][1] + true_boxes[true_idx][3]])
-		        else:
-		            IoU = 0
-		        final_result.append([idx, image,true_classes[true_idx], IoU, result_bboxes[result_idx], true_boxes[true_idx]])
+	    image = paths[idx].split('/')[-1].split('.')[0]
+	    idx+=1
+	    if image not in meta_data_rescaled.index:
+		print(f"Skip image - {image}")
+		continue
+	    result_bboxes = result[0][0] * 300
+	    result_classes = result[0][1]
+	    confidences = result[0][2]
+	    true_boxes = meta_data_rescaled.loc[image][['bbox_left', 'bbox_top', 'bbox_width', 'bbox_height']].values
+	    true_classes = meta_data_rescaled.loc[image][['object_category']].values
+	    if len(true_classes) == 1:
+		true_boxes = [true_boxes]
+	    for true_idx in range(len(true_classes)):
+		for result_idx in range(len(result_classes)):
+		    IoU = iou(result_bboxes[result_idx], [true_boxes[true_idx][0],
+		                                        true_boxes[true_idx][1],
+		                                        true_boxes[true_idx][0] + true_boxes[true_idx][2],
+		                                        true_boxes[true_idx][1] + true_boxes[true_idx][3]])
+		    
+		    final_result.append([idx, image, true_classes[true_idx], result_classes[result_idx], IoU, result_bboxes[result_idx], true_boxes[true_idx]])
 
-	df = pd.DataFrame(final_result, columns=['id', 'image', 'clas', 'iou', 'output_bboxes', 'true_bboxes'])
-	df.true_bboxes = df.true_bboxes.astype(str)
-	gropby_true = df.groupby('true_bboxes')['iou'].max()
 
-	def f(s):
-		try :
-		    return s[0]
-		except IndexError:
-		    return s
+	res = np.array(final_result)
+	res = pd.DataFrame(res, columns=['id', 'image', 'true_class', 'result_class',  'iou', 'output_bboxes', 'true_bboxes'])
+	res.true_class = res.true_class.apply(lambda s: s if type(s) == np.float64 else s[0])
+	res.true_class = res.true_class.astype(int)
+	res.true_bboxes = res.true_bboxes.astype(str)
 
-	df.clas = df.clas.apply(f)
+	task_1 = pd.DataFrame(columns=['iou_threshold', 'accuracy', 'missed', 'false_detected'])
+iou_thresholds = [0.5, 0.75, 0.95]
 
-	groupby_classes = df.groupby(['clas', 'true_bboxes'], as_index=False).count()
-	num_by_classes = groupby_classes.groupby('clas')['output_bboxes'].sum()
 
-	df.loc[df.iou > 0.5].groupby(['clas', 'true_bboxes'], as_index=False).count().groupby('clas')['output_bboxes'].sum()
-
-	task_3_1 = []
-	task_3_2 = []
-	for alpha in [0, 0.5, 0.75, 0.9]:
-		false = gropby_true.loc[gropby_true < alpha].count()
-		accuracy = gropby_true.loc[gropby_true > alpha].count() / len(gropby_true)
-		task_3_1.append([false, accuracy])
-
-		false = df.loc[df.iou < alpha].groupby(['clas', 'true_bboxes'], as_index=False).count().groupby('clas')['output_bboxes'].sum()
-		accuracy = df.loc[df.iou > alpha].groupby(['clas', 'true_bboxes'],
-		                                        as_index=False).count().groupby('clas')['output_bboxes'].sum()\
-		                                        / num_by_classes
-		task_3_2.append([false, accuracy, alpha])
-
-	r1 = pd.DataFrame(task_3_1, index=[0, 0.5, 0.75, 0.9], columns=['false', 'accuracy'])
-	r1.index.name = 'alpha'
-	r2 = pd.DataFrame(columns=['alpha', 'class', 'accuracy', 'false' ])
-	for result in task_3_2:
-		alpha = result[2]
-		classes = result[1].index
-		accuracy = result[0].values
-		false = result[1].values
-		for idx in range(len(accuracy)):
-		    if len(false) == 0:
-		        r2 = r2.append({'alpha': alpha, 'class': classes[idx], 'accuracy':accuracy[idx], 'false':0}, ignore_index=True)
-		    else:
-		        r2 = r2.append({'alpha': alpha, 'class': classes[idx], 'accuracy':accuracy[idx], 'false':false[idx]}, ignore_index=True)
-
-	r2 = r2.fillna(0)
-	print(r1)
-	print(r2)
+	for iou_threshold in iou_thresholds:
+	    max_iou_per_true_bbox = res.groupby('true_bboxes')['iou'].max()
+	    missed = max_iou_per_true_bbox.loc[max_iou_per_true_bbox < iou_threshold].shape[0]
+	    bboxes_true_class = res.loc[res.true_class == res.result_class].groupby('true_bboxes')['iou'].max()
+	    true_bboxes = bboxes_true_class.loc[bboxes_true_class > iou_threshold].shape[0]
+	    full_bboxes = max_iou_per_true_bbox.shape[0]
+	    accuracy = true_bboxes / full_bboxes
+	    bboxes_false_class = res.loc[res.true_class != res.result_class].groupby('true_bboxes')['iou'].max()
+	    false_detected = bboxes_false_class.loc[bboxes_false_class > iou_threshold].shape[0]
+	    task_1 = task_1.append({'iou_threshold': iou_threshold,
+		                    'accuracy': accuracy,
+		                    'missed':missed,
+		                    'false_detected':false_detected}, ignore_index=True)
+	print(task_1)
+	
+	task_2 = pd.DataFrame(columns=['class', 'iou_threshold', 'accuracy', 'missed', 'false_detected'])
+	classes = [1, 4, 3, 8, 2, 6]
+	
+	for current_class in classes:
+	    for iou_threshold in iou_thresholds:
+		max_iou_per_true_bbox = res.loc[res.true_class == current_class].groupby('true_bboxes')['iou'].max()
+		missed = max_iou_per_true_bbox.loc[max_iou_per_true_bbox < iou_threshold].shape[0]
+		bboxes_true_class = res.loc[(res.true_class == current_class)&(res.true_class == res.result_class)].groupby('true_bboxes')['iou'].max()
+		true_bboxes = bboxes_true_class.loc[bboxes_true_class > iou_threshold].shape[0]
+		full_bboxes = max_iou_per_true_bbox.shape[0]
+		accuracy = true_bboxes / full_bboxes
+		bboxes_false_class = res.loc[(res.true_class == current_class) & (res.true_class != res.result_class)].groupby('true_bboxes')['iou'].max()
+		false_detected = bboxes_false_class.loc[bboxes_false_class > iou_threshold].shape[0]
+		task_2 = task_2.append({'class': current_class,
+		                        'iou_threshold': iou_threshold,
+		                        'accuracy': accuracy,
+		                        'missed':missed,
+		                        'false_detected':false_detected}, ignore_index=True)
+	task_2['class'] = task_2['class'].astype(int).apply(lambda s: classes_to_labels[s - 1])
+	print(task_2)
 
 	images = ['0000193_01705_d_0000112', '0000193_01876_d_0000113', '0000193_01497_d_0000111']
 	image_idx = [0, 546, 547]
